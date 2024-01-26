@@ -61,12 +61,17 @@ def compute_confidence_interval(r, n):
     def boundary(zeta):
         return ((np.exp(2*zeta))-1)/((np.exp(2*zeta))+1)
 
-    z = 0.5*np.log(((1-r)/(1+r)))
+    z = 0.5*np.log(((1+r)/(1-r)))# check this
     zetal = z-1.96*np.sqrt(1/(n-3))
     rl = boundary(zetal)
     zetau = z+1.96*np.sqrt(1/(n-3))
     ru = boundary(zetau)
     return rl, ru
+
+
+
+def test_compute_confidence_interval():
+    pass
 
 
 def confidence_status(L, U, v, debug=False):
@@ -120,8 +125,8 @@ def add_confidence_stats(d, ABC_all):
     d['r_E_BA_C2-rBC2'] = d.r_E_BA_C**2 - d.rBC**2
     # d['rAC2'] = d.rAC**2
     d['mAB*mBC-mAC'] = d.mAB*d.mBC - d.mAC
-    L, U = compute_confidence_interval(d.rAC**2, d['n'])
-    d['confidence'] = confidence_status(L, U, d.rAB**2*d.rBC**2, True)
+    L, U = compute_confidence_interval(d.rAC**2, d['n']) # whether to remove sqr
+    d['confidence_rAC'] = confidence_status(L, U, d.rAB**2*d.rBC**2)
     L, U = compute_confidence_interval(d.r_E, d['n'])
     d['confidence_residual_corr'] = confidence_status(
         L, U, pd.Series(np.zeros_like(L)))
@@ -131,10 +136,10 @@ def add_confidence_stats(d, ABC_all):
 
 
 def confidence_graphs(d):
-    confidence = alt.Chart(d, title=f"Correlation confidence {(d['confidence']=='within').sum()}/{len(d)}").mark_point().encode(
+    confidence = alt.Chart(d, title=f"Correlation confidence {(d['confidence_rAC']=='within').sum()}/{len(d)}").mark_point().encode(
         x=alt.X('rAB2:Q'),
         y=alt.Y('rBC2:Q'),
-        color=alt.Color('confidence:N',
+        color=alt.Color('confidence_rAC:N',
                         scale=alt.Scale(domain=['less', 'within', 'more'],
                                         range=['orange', 'green', 'red'])),
     ).transform_calculate(
