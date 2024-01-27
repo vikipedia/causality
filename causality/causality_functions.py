@@ -14,6 +14,10 @@ def dependent(x, m, c, error=1):
     return jitter(m*x + c, scale=error)  # mx +c + error
 
 
+def check_generation(generation, d):
+    return d > 0 and generation >= d
+
+
 def simulations_data(pathway, n=1000):
     random.seed(time.time())
     return np.array([pathway() for i in range(n)])
@@ -61,13 +65,12 @@ def compute_confidence_interval(r, n):
     def boundary(zeta):
         return ((np.exp(2*zeta))-1)/((np.exp(2*zeta))+1)
 
-    z = 0.5*np.log(((1+r)/(1-r)))# check this
+    z = 0.5*np.log(((1+r)/(1-r)))  # check this
     zetal = z-1.96*np.sqrt(1/(n-3))
     rl = boundary(zetal)
     zetau = z+1.96*np.sqrt(1/(n-3))
     ru = boundary(zetau)
     return rl, ru
-
 
 
 def test_compute_confidence_interval():
@@ -125,7 +128,8 @@ def add_confidence_stats(d, ABC_all):
     d['r_E_BA_C2-rBC2'] = d.r_E_BA_C**2 - d.rBC**2
     # d['rAC2'] = d.rAC**2
     d['mAB*mBC-mAC'] = d.mAB*d.mBC - d.mAC
-    L, U = compute_confidence_interval(d.rAC**2, d['n']) # whether to remove sqr
+    L, U = compute_confidence_interval(
+        d.rAC**2, d['n'])  # whether to remove sqr
     d['confidence_rAC'] = confidence_status(L, U, d.rAB**2*d.rBC**2)
     L, U = compute_confidence_interval(d.r_E, d['n'])
     d['confidence_residual_corr'] = confidence_status(
