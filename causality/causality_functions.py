@@ -2,6 +2,7 @@ import time
 import random
 import pandas as pd
 import numpy as np
+import os
 from sklearn.linear_model import LinearRegression
 import altair as alt
 
@@ -18,9 +19,33 @@ def check_generation(generation, d):
     return d > 0 and generation >= d
 
 
-def simulations_data(pathway, n=1000):
-    random.seed(time.time())
-    return np.array([pathway() for i in range(n)])
+def mkfolder(pathway, samplesize, dg, d1, d2, d3, d4):
+    tokens = [f"{pathway.__name__}",
+              f"samplesize-{samplesize}"]
+    if dg < 1:
+        tokens.append("dg-{}".format(dg))
+    if d1 > 0:
+        tokens.append("d1-{}".format(d1))
+    if d2 > 0:
+        tokens.append("d2-{}".format(d2))
+    if d3 > 0:
+        tokens.append("d3-{}".format(d3))
+    if d4 > 0:
+        tokens.append("d4-{}".format(d4))
+
+    path = os.path.join(*tokens)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def simulations_data(pathway, n=1000, run=0):
+    def save_data(r):
+        folder = mkfolder(pathway, samplesize, dg, d1, d2, d3, d4)
+        np.savetxt(os.path.join(folder, f"sample{run}.csv"), r, delimiter=",")
+
+    r = np.array([pathway() for i in range(n)])
+    # save_data(r)
+    return r
 
 
 def regress(X, Y):
@@ -100,27 +125,42 @@ def confidence_status_(r, n):
     return confidence_status(L, U, r)
 
 
-def slope_confidence(m, X, Y):
+def slope_confidence(m, X, Y, k):
     """ as per this pdf
     https://www.ncss.com/wp-content/themes/ncss/pdf/Procedures/PASS/Confidence_Intervals_for_Linear_Regression_Slope.pdf
     """
     n = len(Y)
-    numer = np.sqrt(np.sum((Y - np.mean(Y))**2)/(n-2))
+    Y_ = m*X + k
+    numer = np.sqrt(np.sum((Y - Y_)**2)/(n-2))
     denom = np.sqrt(np.sum((X - np.mean(X))**2))
-    term = 1.96*numer/(denom*(n-2)**0.5)
+    term = 1.96*numer/denom
     return m-term, m+term
 
 
-def compute_slope_confidence(m_all, ABC_all):
+def compute_slope_confidence(m_all, ABC_all, k_all, m_check):
     L, U = [], []
 
-    for m, ABC in zip(m_all, ABC_all):
+    for m, k, ABC in zip(m_all, k_all, ABC_all):
         A, B, C = ABC.transpose()
-        l, u = slope_confidence(m, A, C)
+        l, u = slope_confidence(m, A, C, k)
         L.append(l)
         U.append(u)
 
-    return confidence_status(pd.Series(L), pd.Series(U), m_all)
+    return confidence_status(pd.Series(L), pd.Series(U), m_check)
+
+
+def compute_confidence_rAC(d):
+    L, U = compute_confidence_interval(
+        d.rAC, d['n'])  # whether to remove sqr
+    conf_rAC = confidence_status(L, U, d.rAB*d.rBC)
+    sqrd = d.rAB**2*d.rBC**2
+    sqrAC = d.rAC**2
+    outside = conf_rAC != "within"
+    outside_ = pd.Series([""]*len(outside))
+    outside_ = outside_.mask(sqrd[outside] > sqrAC[outside], "more")
+    outside_ = outside_.mask(sqrd[outside] < sqrAC[outside], "less")
+    conf_rAC.mask(outside, outside_)
+    return conf_rAC
 
 
 def add_confidence_stats(d, ABC_all):
@@ -128,18 +168,22 @@ def add_confidence_stats(d, ABC_all):
     d['r_E_BA_C2-rBC2'] = d.r_E_BA_C**2 - d.rBC**2
     # d['rAC2'] = d.rAC**2
     d['mAB*mBC-mAC'] = d.mAB*d.mBC - d.mAC
-    L, U = compute_confidence_interval(
-        d.rAC**2, d['n'])  # whether to remove sqr
-    d['confidence_rAC'] = confidence_status(L, U, d.rAB**2*d.rBC**2)
+    d['mAB*mBC'] = d.mAB*d.mBC
+    d['confidence_rAC'] = compute_confidence_rAC(d)
+
     L, U = compute_confidence_interval(d.r_E, d['n'])
     d['confidence_residual_corr'] = confidence_status(
         L, U, pd.Series(np.zeros_like(L)))
     L, U = compute_confidence_interval(d.rBC**2, d['n'])  # ???
     d['confidence_corrected_bc_corr'] = confidence_status(L, U, d.r_E_BA_C**2)
-    d['confidence_slope_AC'] = compute_slope_confidence(d.mAC, ABC_all)
+    confidence_slope_AC = compute_slope_confidence(d.mAC,
+                                                   ABC_all,
+                                                   d.kAC,
+                                                   d['mAB*mBC'])
+    d['confidence_slope_AC'] = confidence_slope_AC
 
 
-def confidence_graphs(d):
+def confidence_graphs(folder, d):
     confidence = alt.Chart(d, title=f"Correlation confidence {(d['confidence_rAC']=='within').sum()}/{len(d)}").mark_point().encode(
         x=alt.X('rAB2:Q'),
         y=alt.Y('rBC2:Q'),
@@ -183,7 +227,11 @@ def confidence_graphs(d):
         rAB2='datum.rAB*datum.rAB',
         rBC2='datum.rBC*datum.rBC'
     )
-    return alt.vconcat(confidence_slope_AC, confidence, confidence_res_corr, confidence_corrected_bc_corr)
+    row1 = alt.hconcat(confidence_slope_AC, confidence)
+    row2 = alt.hconcat(confidence_res_corr, confidence_corrected_bc_corr)
+    chart = alt.vconcat(row1, row2).interactive()
+    chart.save(os.path.join(folder, "charts.html"))
+    return chart
 
 
 def stats_graphs(d):
@@ -208,4 +256,7 @@ def stats_graphs(d):
         y='count()').properties(
         title="Corrected Correlation")
 
-    return alt.vconcat(slope_histogram, correlation_graph, residual_correlation, corrected_correlation)
+    row1 = alt.hconcat(slope_histogram, correlation_graph)
+    row2 = alt.hconcat(residual_correlation, corrected_correlation)
+    chart = alt.vconcat(row1, row2).interactive()
+    return chart
