@@ -5,6 +5,7 @@ import numpy as np
 import os
 from sklearn.linear_model import LinearRegression
 import altair as alt
+import pytest
 
 
 def jitter(x, scale=1):
@@ -66,7 +67,7 @@ def compute_regression(ABC):
     RBC = regress(B, C)
     RAC = regress(A, C)
     corrE = np.corrcoef(np.array([RAB[3], RBC[3]]))
-    corrE_BA_C = np.corrcoef(np.array([np.square(RAB[3]), C]))
+    corrE_BA_C = np.corrcoef(np.array([RAB[3], C]))
 
     # print(RAB[1]*RBC[1]-RAC[1]) ## better to look at distribution of this error..it should come with center as 0
     return {"kAB": RAB[0], "kBC": RBC[0], "kAC": RAC[0],
@@ -149,6 +150,30 @@ def compute_slope_confidence(m_all, ABC_all, k_all, m_check):
     return confidence_status(pd.Series(L), pd.Series(U), m_check)
 
 
+def get_value(d, variable):
+    if isinstance(variable, str):
+        return d[variable]
+    else:
+        value = d[variable[0]]
+        for v in variable[1:]:
+            value = value*d[v]
+        return value
+
+
+def compute_confidence_handle_square(d, boundary, variable):
+    L, U = compute_confidence_interval(get_value(d, boundary), d['n'])
+    conf = confidence_status(L, U, get_value(d, variable))
+    sqrdV = get_value(d, variable)**2
+    sqrdB = get_value(d, boundary)**2
+    outside = conf != "within"
+    outside_ = pd.Series([""]*len(outside))
+    outside_ = outside_.mask(sqrdV[outside] < sqrdB[outside], "less")
+    outside_ = outside_.mask(sqrdV[outside] > sqrdB[outside], "more")
+
+    conf.mask(outside, outside_)
+    return conf
+
+
 def compute_confidence_rAC(d):
     L, U = compute_confidence_interval(
         d.rAC, d['n'])  # whether to remove sqr
@@ -163,6 +188,11 @@ def compute_confidence_rAC(d):
     return conf_rAC
 
 
+def test_squred(d):
+    x = compute_confidence_handle_square(d, 'rAC', ('rAB', 'rBC'))
+    assert d['confidence_rAC'].equals(x)
+
+
 def add_confidence_stats(d, ABC_all):
     d['rAB2*rBC2-rAC2'] = d.rAB**2 * d.rBC**2 - d.rAC**2
     d['r_E_BA_C2-rBC2'] = d.r_E_BA_C**2 - d.rBC**2
@@ -170,12 +200,14 @@ def add_confidence_stats(d, ABC_all):
     d['mAB*mBC-mAC'] = d.mAB*d.mBC - d.mAC
     d['mAB*mBC'] = d.mAB*d.mBC
     d['confidence_rAC'] = compute_confidence_rAC(d)
-
+    test_squred(d)
     L, U = compute_confidence_interval(d.r_E, d['n'])
     d['confidence_residual_corr'] = confidence_status(
         L, U, pd.Series(np.zeros_like(L)))
-    L, U = compute_confidence_interval(d.rBC**2, d['n'])  # ???
-    d['confidence_corrected_bc_corr'] = confidence_status(L, U, d.r_E_BA_C**2)
+    # L, U = compute_confidence_interval(d.rBC**2, d['n'])  # ???
+    d['confidence_corrected_bc_corr'] = compute_confidence_handle_square(d,
+                                                                         'rBC',
+                                                                         'r_E_BA_C')
     confidence_slope_AC = compute_slope_confidence(d.mAC,
                                                    ABC_all,
                                                    d.kAC,
@@ -183,7 +215,7 @@ def add_confidence_stats(d, ABC_all):
     d['confidence_slope_AC'] = confidence_slope_AC
 
 
-def confidence_graphs(folder, d):
+def confidence_charts(folder, d):
     confidence = alt.Chart(d, title=f"Correlation confidence {(d['confidence_rAC']=='within').sum()}/{len(d)}").mark_point().encode(
         x=alt.X('rAB2:Q'),
         y=alt.Y('rBC2:Q'),
@@ -227,11 +259,23 @@ def confidence_graphs(folder, d):
         rAB2='datum.rAB*datum.rAB',
         rBC2='datum.rBC*datum.rBC'
     )
-    row1 = alt.hconcat(confidence_slope_AC, confidence)
-    row2 = alt.hconcat(confidence_res_corr, confidence_corrected_bc_corr)
-    chart = alt.vconcat(row1, row2).interactive()
-    chart.save(os.path.join(folder, "charts.html"))
+
+    return confidence_slope_AC, confidence, confidence_res_corr, confidence_corrected_bc_corr
+
+def confidence_graphs(folder, d):
+    charts = confidence_charts(folder, d)
+    resized = [c.properties(height=400, width=400) for c in charts]
+    #slop, corr, res_corr, corrected_bc_cor = resized
+    #row1 = alt.hconcat(slop, corr)
+    #row2 = alt.hconcat(res_corr, corrected_bc_cor)
+    #chart = alt.vconcat(row1, row2).interactive()
+    chart = alt.hconcat(*resized)
+    chart.save(os.path.join(folder, "charts.png"))
     return chart
+
+
+def line_plot(ABC):
+    pass
 
 
 def stats_graphs(d):
